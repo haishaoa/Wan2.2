@@ -96,7 +96,7 @@ cd Wan2.2
 Install dependencies:
 ```sh
 # Ensure torch >= 2.4.0
-# If the installation of `flash_attn` fails, try installing the other packages first and install `flash_attn` last
+# We recommend `flash_attn>=4`; if installation fails, install other packages first and install `flash_attn>=4` last
 pip install -r requirements.txt
 # If you want to use CosyVoice to synthesize speech for Speech-to-Video Generation, please install requirements_s2v.txt additionally
 pip install -r requirements_s2v.txt

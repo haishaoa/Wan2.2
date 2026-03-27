@@ -1,15 +1,24 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import torch
 
+FLASH_ATTN_VARLEN_IFACE = None
+FLASH_ATTN_IFACE_VERSION = None
+
 try:
     import flash_attn_interface
-    FLASH_ATTN_3_AVAILABLE = True
+    if hasattr(flash_attn_interface, "flash_attn_varlen_func"):
+        FLASH_ATTN_VARLEN_IFACE = flash_attn_interface.flash_attn_varlen_func
+        FLASH_ATTN_IFACE_VERSION = 4 if hasattr(
+            flash_attn_interface, "flash_attn_func_v4") else 3
+        FLASH_ATTN_3_AVAILABLE = True
+    else:
+        FLASH_ATTN_3_AVAILABLE = False
 except ModuleNotFoundError:
     FLASH_ATTN_3_AVAILABLE = False
 
 try:
     import flash_attn
-    FLASH_ATTN_2_AVAILABLE = True
+    FLASH_ATTN_2_AVAILABLE = hasattr(flash_attn, "flash_attn_varlen_func")
 except ModuleNotFoundError:
     FLASH_ATTN_2_AVAILABLE = False
 
@@ -85,15 +94,15 @@ def flash_attention(
     if q_scale is not None:
         q = q * q_scale
 
-    if version is not None and version == 3 and not FLASH_ATTN_3_AVAILABLE:
+    if version is not None and version >= 3 and not FLASH_ATTN_3_AVAILABLE:
         warnings.warn(
-            'Flash attention 3 is not available, use flash attention 2 instead.'
+            'FlashAttention >=3 is not available, falling back to FlashAttention 2.'
         )
 
     # apply attention
-    if (version is None or version == 3) and FLASH_ATTN_3_AVAILABLE:
-        # Note: dropout_p, window_size are not supported in FA3 now.
-        x = flash_attn_interface.flash_attn_varlen_func(
+    if (version is None or version >= 3) and FLASH_ATTN_3_AVAILABLE:
+        # Note: dropout_p, window_size are not supported in FA>=3 interface path.
+        x = FLASH_ATTN_VARLEN_IFACE(
             q=q,
             k=k,
             v=v,
@@ -108,8 +117,7 @@ def flash_attention(
             softmax_scale=softmax_scale,
             causal=causal,
             deterministic=deterministic)[0].unflatten(0, (b, lq))
-    else:
-        assert FLASH_ATTN_2_AVAILABLE
+    elif FLASH_ATTN_2_AVAILABLE:
         x = flash_attn.flash_attn_varlen_func(
             q=q,
             k=k,
@@ -125,6 +133,25 @@ def flash_attention(
             causal=causal,
             window_size=window_size,
             deterministic=deterministic).unflatten(0, (b, lq))
+    else:
+        warnings.warn(
+            'No FlashAttention varlen backend found. Falling back to scaled_dot_product_attention.'
+        )
+        if q_lens is not None or k_lens is not None:
+            warnings.warn(
+                'Padding mask is disabled when using scaled_dot_product_attention. It can impact performance.'
+            )
+        q_sdpa = q.unflatten(0, (b, lq)).transpose(1, 2).to(dtype)
+        k_sdpa = k.unflatten(0, (b, lk)).transpose(1, 2).to(dtype)
+        v_sdpa = v.unflatten(0, (b, lk)).transpose(1, 2).to(dtype)
+        x = torch.nn.functional.scaled_dot_product_attention(
+            q_sdpa,
+            k_sdpa,
+            v_sdpa,
+            attn_mask=None,
+            is_causal=causal,
+            dropout_p=dropout_p,
+        ).transpose(1, 2).contiguous()
 
     # output
     return x.type(out_dtype)

@@ -19,12 +19,12 @@ poetry install
 
 ### Handling `flash-attn` Installation Issues
 
-If `flash-attn` fails due to **PEP 517 build issues**, you can try one of the following fixes.
+If `flash-attn` (recommended: `flash-attn>=4`) fails due to **PEP 517 build issues**, you can try one of the following fixes.
 
 #### No-Build-Isolation Installation (Recommended)
 ```bash
 poetry run pip install --upgrade pip setuptools wheel
-poetry run pip install flash-attn --no-build-isolation
+poetry run pip install "flash-attn>=4" --no-build-isolation
 poetry install
 ```
 

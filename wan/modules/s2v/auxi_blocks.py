@@ -14,7 +14,13 @@ from einops import rearrange
 try:
     from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
 except ImportError:
-    flash_attn_func = None
+    try:
+        import flash_attn as _flash_attn
+        flash_attn_qkvpacked_func = getattr(_flash_attn, "flash_attn_qkvpacked_func", None)
+        flash_attn_func = getattr(_flash_attn, "flash_attn_func", None)
+    except ImportError:
+        flash_attn_func = None
+        flash_attn_qkvpacked_func = None
 
 MEMORY_LAYOUT = {
     "flash": (
@@ -73,14 +79,20 @@ def attention(
         x = F.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_mask, dropout_p=drop_rate, is_causal=causal)
     elif mode == "flash":
-        x = flash_attn_func(
-            q,
-            k,
-            v,
-        )
-        # x with shape [(bxs), a, d]
-        x = x.view(batch_size, max_seqlen_q, x.shape[-2],
-                   x.shape[-1])  # reshape x to [b, s, a, d]
+        if flash_attn_func is None:
+            if attn_mask is not None and attn_mask.dtype != torch.bool:
+                attn_mask = attn_mask.to(q.dtype)
+            x = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=drop_rate, is_causal=causal)
+        else:
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+            )
+            # x with shape [(bxs), a, d]
+            x = x.view(batch_size, max_seqlen_q, x.shape[-2],
+                       x.shape[-1])  # reshape x to [b, s, a, d]
     elif mode == "vanilla":
         scale_factor = 1 / math.sqrt(q.size(-1))
 
